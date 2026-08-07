@@ -11,15 +11,20 @@ Concurrent B2B lead scraper, heuristic CIS filter, Telegram username validator, 
 - CIS/Slavic heuristics with audit reasons and thread-safe deduplication.
 - Telegram MTProto validation with persistent sessions, interactive auth, pacing, FloodWait handling, and deleted-account detection.
 - CSV, JSON, and styled XLSX exports selected by output extension.
+- Automatic sequential category crawling with pagination and cross-category deduplication.
+- `.env` loading for local development and GitHub Actions CI with Go, vet, tests, and Docker build checks.
 
 ## Requirements
 
 - Go 1.25 or newer.
 - Telegram API credentials only for live Telegram validation. Create them at `my.telegram.org`.
+- Docker Desktop, when running the containerized workflow.
 
 ## Run Main Pipeline
 
 Create a newline-delimited input file. Empty lines and lines beginning with `#` are ignored.
+
+For direct URLs:
 
 ```powershell
 go run ./cmd/app `
@@ -33,6 +38,7 @@ Available flags:
 
 ```text
 -input     URL input file, default: urls.txt
+-categories comma-separated Affpaying category URLs; takes priority over -input
 -output    .csv, .json, or .xlsx output path
 -workers   concurrent worker count, default: 20
 -tg-appid  Telegram API ID, optional
@@ -43,6 +49,45 @@ Available flags:
 When `-tg-appid` and `-tg-apphash` are supplied, the application starts interactive Telegram authentication on the first run. It asks for the phone number, login code, and 2FA password when needed. The session is then reused.
 
 Without Telegram credentials, validation is disabled and results are marked `SKIPPED`.
+
+To crawl categories sequentially, use:
+
+```powershell
+go run ./cmd/app `
+	-categories "https://www.affpaying.com/affiliate-networks/gambling,https://www.affpaying.com/affiliate-networks/crypto,https://www.affpaying.com/affiliate-networks/health-nutra" `
+	-output output/leads_categories.xlsx `
+	-workers 10
+```
+
+Each category is scanned completely page by page before the next category starts. Discovered card URLs are deduplicated across categories.
+
+## Environment File
+
+Copy `.env.example` to `.env` for local defaults:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+The applications load `.env` automatically. Supported values include `TG_APP_ID`, `TG_APP_HASH`, `WORKERS`, and `OUTPUT_PATH`. Never commit `.env` or real Telegram credentials.
+
+## Docker
+
+Build and run the category workflow:
+
+```powershell
+$env:TG_APP_ID = "your_app_id"
+$env:TG_APP_HASH = "your_app_hash"
+
+docker compose build
+docker compose up
+```
+
+The Compose setup persists Telegram sessions in `./data` and exports in `./output`.
+
+## Execution Summary
+
+After the pipeline finishes, it prints an ASCII summary containing processed URLs, extracted leads, CIS/non-CIS counts, Telegram statuses, elapsed time, and processing speed.
 
 ## Telegram Diagnostic Tool
 
@@ -71,6 +116,8 @@ The diagnostic output includes `VALID`, `NOT_FOUND`, `INVALID`, `DELETED`, user 
 go test ./...
 go vet ./...
 ```
+
+GitHub Actions runs the same checks on pushes and pull requests to `main` and `master`, and also verifies the Docker build.
 
 ## Security
 
