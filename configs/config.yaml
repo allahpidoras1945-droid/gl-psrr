@@ -1,0 +1,14 @@
+app:
+  workers: 16
+  request_timeout: 15s
+  user_agent: glukoza-lead-parser/1.0
+filter:
+  cis_only: false
+telegram:
+  enabled: false
+  session_path: data/telegram.session
+  min_delay: 500ms
+  max_delay: 1s
+export:
+  format: json
+  output: output/leads.json
