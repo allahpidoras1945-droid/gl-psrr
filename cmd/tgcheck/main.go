@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/example/glukoza/internal/validator/telegram"
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -24,6 +25,7 @@ func main() {
 }
 
 func run() error {
+	_ = godotenv.Load()
 	usernamesFlag := flag.String("usernames", "", "comma-separated usernames")
 	inputFile := flag.String("file", "", "file with one username per line")
 	appID := flag.Int("appid", 0, "Telegram API App ID")

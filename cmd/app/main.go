@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/example/glukoza/internal/pipeline"
 	"github.com/example/glukoza/internal/scraper"
 	"github.com/example/glukoza/internal/validator/telegram"
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -28,23 +30,38 @@ func main() {
 }
 
 func run() error {
-	inputPath := flag.String("input", "urls.txt", "newline-delimited target URL file")
-	outputPath := flag.String("output", "leads_export.xlsx", "output path (.csv, .json, or .xlsx)")
-	workers := flag.Int("workers", 20, "number of concurrent workers")
-	tgAppID := flag.Int("tg-appid", 0, "Telegram API application ID")
-	tgAppHash := flag.String("tg-apphash", "", "Telegram API application hash")
+	_ = godotenv.Load()
+	inputPath := flag.String("input", "", "newline-delimited target URL file")
+	categories := flag.String("categories", "", "comma-separated category URLs to crawl")
+	outputPath := flag.String("output", envOrDefault("OUTPUT_PATH", "leads_export.xlsx"), "output path (.csv, .json, or .xlsx)")
+	workers := flag.Int("workers", envIntOrDefault("WORKERS", 20), "number of concurrent workers")
+	tgAppID := flag.Int("tg-appid", envIntOrDefault("TG_APP_ID", 0), "Telegram API application ID")
+	tgAppHash := flag.String("tg-apphash", os.Getenv("TG_APP_HASH"), "Telegram API application hash")
 	sessionPath := flag.String("session", "data/tg_session.json", "Telegram session file")
 	flag.Parse()
 	if *workers < 1 {
 		return fmt.Errorf("workers must be positive")
 	}
-	sources, err := readLines(*inputPath)
-	if err != nil {
-		return fmt.Errorf("read input URLs: %w", err)
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
+	var sources []string
+	var err error
+	if strings.TrimSpace(*categories) != "" {
+		categoryURLs := splitValues(*categories)
+		crawler := scraper.NewCategoryCrawler(scraper.ScraperConfig{UserAgent: "glukoza-lead-parser/1.0", Timeout: 15 * time.Second})
+		sources, err = crawler.DiscoverCardURLs(ctx, categoryURLs)
+		if err != nil {
+			return fmt.Errorf("discover category cards: %w", err)
+		}
+		log.Printf("discovered %d card URLs from %d categories", len(sources), len(categoryURLs))
+	} else if strings.TrimSpace(*inputPath) != "" {
+		sources, err = readLines(*inputPath)
+		if err != nil {
+			return fmt.Errorf("read input URLs: %w", err)
+		}
+	} else {
+		return fmt.Errorf("provide -categories URL1,URL2 or -input urls.txt")
+	}
 	scraperEngine := scraper.NewScraperFactory(scraper.ScraperConfig{UserAgent: "glukoza-lead-parser/1.0", Timeout: 15 * time.Second, MaxDepth: 1, Concurrency: *workers}, scraper.NewRegexExtractor())
 	cisFilter := filter.NewCISFilter()
 	deduplicator := filter.NewDeduplicator()
@@ -106,4 +123,30 @@ func readLines(path string) ([]string, error) {
 		return nil, err
 	}
 	return lines, nil
+}
+
+func splitValues(value string) []string {
+	parts := strings.Split(value, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
+}
+
+func envOrDefault(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func envIntOrDefault(name string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
+	if err != nil {
+		return fallback
+	}
+	return value
 }

@@ -1,0 +1,17 @@
+services:
+  app:
+    build:
+      context: .
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+    environment:
+      TG_APP_ID: ${TG_APP_ID}
+      TG_APP_HASH: ${TG_APP_HASH}
+    command:
+      - -categories
+      - https://www.affpaying.com/affiliate-networks/gambling,https://www.affpaying.com/affiliate-networks/crypto,https://www.affpaying.com/affiliate-networks/health-nutra
+      - -output
+      - /app/output/leads_categories.xlsx
+      - -workers
+      - "10"

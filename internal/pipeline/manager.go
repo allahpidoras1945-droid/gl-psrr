@@ -7,6 +7,8 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/example/glukoza/internal/domain"
 	"golang.org/x/sync/singleflight"
@@ -23,6 +25,20 @@ type Manager struct {
 	tgFlight    singleflight.Group
 }
 
+type executionStats struct {
+	targets     atomic.Uint64
+	leads       atomic.Uint64
+	cis         atomic.Uint64
+	nonCIS      atomic.Uint64
+	tgExtracted atomic.Uint64
+	tgChecked   atomic.Uint64
+	tgValid     atomic.Uint64
+	tgInvalid   atomic.Uint64
+	tgNotFound  atomic.Uint64
+	tgSkipped   atomic.Uint64
+	tgDeleted   atomic.Uint64
+}
+
 func NewManager(scraper domain.Scraper, filter domain.Filter, dedup interface{ IsDuplicate(string) bool }, tgValidator domain.TGValidator, workerCount int) domain.Pipeline {
 	if workerCount < 1 {
 		workerCount = 1
@@ -34,6 +50,8 @@ func (m *Manager) Run(ctx context.Context, sources []string) ([]*domain.Lead, er
 	if ctx == nil {
 		return nil, fmt.Errorf("pipeline context is nil")
 	}
+	started := time.Now()
+	stats := &executionStats{}
 	jobs := make(chan string, len(sources))
 	results := make(chan *domain.Lead, m.workerCount)
 	jobErrors := make(chan error, len(sources))
@@ -48,12 +66,13 @@ func (m *Manager) Run(ctx context.Context, sources []string) ([]*domain.Lead, er
 		go func(workerID int) {
 			defer workers.Done()
 			for targetURL := range jobs {
+				stats.targets.Add(1)
 				select {
 				case <-ctx.Done():
 					return
 				default:
 				}
-				lead, err := m.processTarget(ctx, targetURL)
+				lead, err := m.processTarget(ctx, targetURL, stats)
 				if err != nil {
 					wrapped := fmt.Errorf("worker %d: %w", workerID, err)
 					log.Printf("pipeline target failed: %v", wrapped)
@@ -85,13 +104,14 @@ func (m *Manager) Run(ctx context.Context, sources []string) ([]*domain.Lead, er
 	for err := range jobErrors {
 		runErrors = append(runErrors, err)
 	}
+	printSummary(stats, time.Since(started))
 	if err := ctx.Err(); err != nil {
 		return leads, err
 	}
 	return leads, errors.Join(runErrors...)
 }
 
-func (m *Manager) processTarget(ctx context.Context, targetURL string) (*domain.Lead, error) {
+func (m *Manager) processTarget(ctx context.Context, targetURL string, stats *executionStats) (*domain.Lead, error) {
 	if m.scraper == nil || m.filter == nil {
 		return nil, fmt.Errorf("pipeline scraper and filter are required")
 	}
@@ -105,7 +125,13 @@ func (m *Manager) processTarget(ctx context.Context, targetURL string) (*domain.
 	if lead == nil {
 		return nil, fmt.Errorf("scraper returned nil lead for %s", targetURL)
 	}
+	stats.leads.Add(1)
 	lead.IsCIS, lead.CISReason = m.filter.IsCIS(lead)
+	if lead.IsCIS {
+		stats.cis.Add(1)
+	} else {
+		stats.nonCIS.Add(1)
+	}
 	for _, email := range lead.Contacts.Emails {
 		if m.dedup != nil {
 			m.dedup.IsDuplicate("email:" + email)
@@ -116,11 +142,14 @@ func (m *Manager) processTarget(ctx context.Context, targetURL string) (*domain.
 	}
 	validHandles := make([]string, 0, len(lead.Contacts.Telegram))
 	for _, handle := range lead.Contacts.Telegram {
+		stats.tgExtracted.Add(1)
 		result, validateErr := m.validateTelegram(ctx, handle)
 		if validateErr != nil {
 			return nil, fmt.Errorf("validate Telegram %q: %w", handle, validateErr)
 		}
 		if result != nil {
+			stats.tgChecked.Add(1)
+			stats.recordTelegramStatus(result.Status)
 			lead.TGResults = append(lead.TGResults, *result)
 			if result.Status == domain.TGStatusValid || result.Status == domain.TGStatusSkipped {
 				validHandles = append(validHandles, handle)
@@ -129,6 +158,54 @@ func (m *Manager) processTarget(ctx context.Context, targetURL string) (*domain.
 	}
 	lead.Contacts.Telegram = validHandles
 	return lead, nil
+}
+
+func (s *executionStats) recordTelegramStatus(status domain.TGStatus) {
+	switch status {
+	case domain.TGStatusValid:
+		s.tgValid.Add(1)
+	case domain.TGStatusInvalid:
+		s.tgInvalid.Add(1)
+	case domain.TGStatusNotFound:
+		s.tgNotFound.Add(1)
+	case domain.TGStatusSkipped:
+		s.tgSkipped.Add(1)
+	case domain.TGStatusDeleted:
+		s.tgDeleted.Add(1)
+	}
+}
+
+func printSummary(stats *executionStats, elapsed time.Duration) {
+	targets := stats.targets.Load()
+	cis := stats.cis.Load()
+	nonCIS := stats.nonCIS.Load()
+	totalClassified := cis + nonCIS
+	percent := func(value, total uint64) float64 {
+		if total == 0 {
+			return 0
+		}
+		return float64(value) * 100 / float64(total)
+	}
+	speed := 0.0
+	if elapsed > 0 {
+		speed = float64(targets) / elapsed.Seconds()
+	}
+	fmt.Println("====================================================")
+	fmt.Println("                EXECUTION SUMMARY")
+	fmt.Println("====================================================")
+	fmt.Printf(" Total URLs Processed : %d\n", targets)
+	fmt.Printf(" Total Leads Extracted: %d\n", stats.leads.Load())
+	fmt.Printf(" CIS Filtered (Flagged): %d (%.1f%%)\n", cis, percent(cis, totalClassified))
+	fmt.Printf(" Non-CIS Leads        : %d (%.1f%%)\n", nonCIS, percent(nonCIS, totalClassified))
+	fmt.Printf(" Telegram Handles     : %d extracted, %d checked\n", stats.tgExtracted.Load(), stats.tgChecked.Load())
+	fmt.Printf("   - Valid TG Accounts : %d\n", stats.tgValid.Load())
+	fmt.Printf("   - Not Found         : %d\n", stats.tgNotFound.Load())
+	fmt.Printf("   - Invalid           : %d\n", stats.tgInvalid.Load())
+	fmt.Printf("   - Skipped           : %d\n", stats.tgSkipped.Load())
+	fmt.Printf("   - Deleted           : %d\n", stats.tgDeleted.Load())
+	fmt.Printf(" Total Elapsed Time   : %.2fs\n", elapsed.Seconds())
+	fmt.Printf(" Processing Speed     : ~%.1f targets/sec\n", speed)
+	fmt.Println("====================================================")
 }
 
 func (m *Manager) validateTelegram(ctx context.Context, handle string) (*domain.TGValidationResult, error) {
