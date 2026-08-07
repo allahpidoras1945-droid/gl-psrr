@@ -24,6 +24,48 @@ Concurrent B2B lead scraper, heuristic CIS filter, Telegram username validator, 
 
 Create a newline-delimited input file. Empty lines and lines beginning with `#` are ignored.
 
+### инструкция для запуска после скачивания
+
+```powershell
+git clone https://github.com/allahpidoras1945-droid/gl-psrr.git
+cd gl-psrr
+Copy-Item .env.example .env
+```
+
+Открой `.env` и укажи свои Telegram API credentials:
+
+```env
+TG_APP_ID=твой_app_id
+TG_APP_HASH=твой_app_hash
+WORKERS=10
+OUTPUT_PATH=output/leads.xlsx
+```
+
+Затем выбери один способ запуска.
+
+**Вариант 1: Docker Desktop**
+
+```powershell
+docker compose build
+docker compose up
+```
+
+**Вариант 2: локальный Go**
+
+Требуется Go 1.25 или новее:
+
+```powershell
+go mod download
+go run ./cmd/app `
+	-categories "https://www.affpaying.com/affiliate-networks/gambling,https://www.affpaying.com/affiliate-networks/crypto" `
+	-output output/leads.xlsx `
+	-workers 10
+```
+
+При первом запуске Telegram программа попросит номер телефона, код из Telegram и 2FA-пароль. Сессия сохранится в папке `data/`. Результат появится в папке `output/`.
+
+Не отправляй в GitHub файлы `.env` и `data/tg_session.json`.
+
 For direct URLs:
 
 ```powershell
