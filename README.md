@@ -24,7 +24,7 @@ Concurrent B2B lead scraper, heuristic CIS filter, Telegram username validator, 
 
 Create a newline-delimited input file. Empty lines and lines beginning with `#` are ignored.
 
-### инструкция для запуска после скачивания
+### Setup After Download
 
 ```powershell
 git clone https://github.com/allahpidoras1945-droid/gl-psrr.git
@@ -32,27 +32,27 @@ cd gl-psrr
 Copy-Item .env.example .env
 ```
 
-Открой `.env` и укажи свои Telegram API credentials:
+Open `.env` and add your Telegram API credentials:
 
 ```env
-TG_APP_ID=твой_app_id
-TG_APP_HASH=твой_app_hash
+TG_APP_ID=your_app_id
+TG_APP_HASH=your_app_hash
 WORKERS=10
 OUTPUT_PATH=output/leads.xlsx
 ```
 
-Затем выбери один способ запуска.
+Choose one of the following launch options.
 
-**Вариант 1: Docker Desktop**
+**Option 1: Docker Desktop**
 
 ```powershell
 docker compose build
 docker compose up
 ```
 
-**Вариант 2: локальный Go**
+**Option 2: Local Go**
 
-Требуется Go 1.25 или новее:
+Go 1.25 or newer is required:
 
 ```powershell
 go mod download
@@ -62,9 +62,24 @@ go run ./cmd/app `
 	-workers 10
 ```
 
-При первом запуске Telegram программа попросит номер телефона, код из Telegram и 2FA-пароль. Сессия сохранится в папке `data/`. Результат появится в папке `output/`.
+On the first Telegram-enabled run, the application asks for your phone number, Telegram login code, and 2FA password. The session is saved under `data/`, and results are written to `output/`.
 
-Не отправляй в GitHub файлы `.env` и `data/tg_session.json`.
+Never upload `.env` or `data/tg_session.json` to GitHub.
+
+## Production Mode
+
+The application runs in live mode by default. When started with `-categories` or `-input`, it immediately sends HTTP requests to the specified websites, processes the discovered pages, validates Telegram handles when credentials are configured, and writes the export file. There is no mock or dry-run mode enabled by default.
+
+Recommended production launch:
+
+```powershell
+go run ./cmd/app `
+	-categories "https://www.affpaying.com/affiliate-networks/gambling,https://www.affpaying.com/affiliate-networks/crypto,https://www.affpaying.com/affiliate-networks/health-nutra" `
+	-output output/leads_production.xlsx `
+	-workers 10
+```
+
+The crawler processes categories sequentially, completes all available pages in one category before moving to the next, and deduplicates discovered card URLs.
 
 For direct URLs:
 
@@ -164,3 +179,5 @@ GitHub Actions runs the same checks on pushes and pull requests to `main` and `m
 ## Security
 
 Never commit Telegram API hashes, API credentials, phone numbers, or session files. Local sessions under `data/`, input URL files, generated exports, and temporary Excel files are ignored by `.gitignore`.
+
+> **Optional test run:** to test the pipeline with a manually prepared list instead of category discovery, create `urls.txt` with one URL per line and run `go run ./cmd/app -input urls.txt -output output/leads_test.xlsx -workers 5`.
