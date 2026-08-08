@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/example/glukoza/internal/domain"
+	"github.com/example/glukoza/internal/storage"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -23,6 +24,7 @@ type Manager struct {
 	tgMu        sync.RWMutex
 	tgCache     map[string]domain.TGValidationResult
 	tgFlight    singleflight.Group
+	store       *storage.DB
 }
 
 type executionStats struct {
@@ -40,10 +42,18 @@ type executionStats struct {
 }
 
 func NewManager(scraper domain.Scraper, filter domain.Filter, dedup interface{ IsDuplicate(string) bool }, tgValidator domain.TGValidator, workerCount int) domain.Pipeline {
+	return newManager(scraper, filter, dedup, tgValidator, workerCount, nil)
+}
+
+func NewManagerWithStorage(scraper domain.Scraper, filter domain.Filter, dedup interface{ IsDuplicate(string) bool }, tgValidator domain.TGValidator, workerCount int, store *storage.DB) domain.Pipeline {
+	return newManager(scraper, filter, dedup, tgValidator, workerCount, store)
+}
+
+func newManager(scraper domain.Scraper, filter domain.Filter, dedup interface{ IsDuplicate(string) bool }, tgValidator domain.TGValidator, workerCount int, store *storage.DB) domain.Pipeline {
 	if workerCount < 1 {
 		workerCount = 1
 	}
-	return &Manager{scraper: scraper, filter: filter, dedup: dedup, tgValidator: tgValidator, workerCount: workerCount, tgCache: make(map[string]domain.TGValidationResult)}
+	return &Manager{scraper: scraper, filter: filter, dedup: dedup, tgValidator: tgValidator, workerCount: workerCount, tgCache: make(map[string]domain.TGValidationResult), store: store}
 }
 
 func (m *Manager) Run(ctx context.Context, sources []string) ([]*domain.Lead, error) {
@@ -157,6 +167,11 @@ func (m *Manager) processTarget(ctx context.Context, targetURL string, stats *ex
 		}
 	}
 	lead.Contacts.Telegram = validHandles
+	if m.store != nil {
+		if err := m.store.SaveLead(ctx, lead); err != nil {
+			return nil, err
+		}
+	}
 	return lead, nil
 }
 

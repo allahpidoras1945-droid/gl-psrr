@@ -18,6 +18,7 @@ import (
 	"github.com/example/glukoza/internal/filter"
 	"github.com/example/glukoza/internal/pipeline"
 	"github.com/example/glukoza/internal/scraper"
+	"github.com/example/glukoza/internal/storage"
 	"github.com/example/glukoza/internal/validator/telegram"
 	"github.com/joho/godotenv"
 )
@@ -34,6 +35,7 @@ func run() error {
 	inputPath := flag.String("input", "", "newline-delimited target URL file")
 	categories := flag.String("categories", "", "comma-separated category URLs to crawl")
 	outputPath := flag.String("output", envOrDefault("OUTPUT_PATH", "leads_export.xlsx"), "output path (.csv, .json, or .xlsx)")
+	databasePath := flag.String("db", "data/leads.db", "SQLite database path")
 	workers := flag.Int("workers", envIntOrDefault("WORKERS", 20), "number of concurrent workers")
 	tgAppID := flag.Int("tg-appid", envIntOrDefault("TG_APP_ID", 0), "Telegram API application ID")
 	tgAppHash := flag.String("tg-apphash", os.Getenv("TG_APP_HASH"), "Telegram API application hash")
@@ -65,6 +67,11 @@ func run() error {
 	scraperEngine := scraper.NewScraperFactory(scraper.ScraperConfig{UserAgent: "glukoza-lead-parser/1.0", Timeout: 15 * time.Second, MaxDepth: 1, Concurrency: *workers}, scraper.NewRegexExtractor())
 	cisFilter := filter.NewCISFilter()
 	deduplicator := filter.NewDeduplicator()
+	database, err := storage.InitDB(*databasePath)
+	if err != nil {
+		return fmt.Errorf("initialize database: %w", err)
+	}
+	defer database.Close()
 	var validator domain.TGValidator
 	if *tgAppID != 0 || strings.TrimSpace(*tgAppHash) != "" {
 		if *tgAppID == 0 || strings.TrimSpace(*tgAppHash) == "" {
@@ -85,7 +92,7 @@ func run() error {
 		validator = telegram.NewClient(false, *sessionPath, 500*time.Millisecond, time.Second)
 	}
 
-	engine := pipeline.NewManager(scraperEngine, cisFilter, deduplicator, validator, *workers)
+	engine := pipeline.NewManagerWithStorage(scraperEngine, cisFilter, deduplicator, validator, *workers, database)
 	started := time.Now()
 	leads, runErr := engine.Run(ctx, sources)
 	elapsed := time.Since(started)
@@ -97,7 +104,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := exporterEngine.Export(ctx, leads, *outputPath); err != nil {
+	var exportErr error
+	if excel, ok := exporterEngine.(*exporter.ExcelExporter); ok {
+		exportErr = excel.ExportFromDB(ctx, database, *outputPath)
+	} else {
+		exportErr = exporterEngine.Export(ctx, leads, *outputPath)
+	}
+	if err := exportErr; err != nil {
 		return fmt.Errorf("export leads: %w", err)
 	}
 	log.Printf("exported %d leads to %s", len(leads), *outputPath)

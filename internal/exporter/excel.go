@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/example/glukoza/internal/domain"
+	"github.com/example/glukoza/internal/storage"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -13,6 +14,14 @@ type ExcelExporter struct{}
 type Excel = ExcelExporter
 
 func NewExcelExporter() domain.Exporter { return &ExcelExporter{} }
+
+func (e *ExcelExporter) ExportFromDB(ctx context.Context, database *storage.DB, outputPath string) error {
+	leads, err := database.GetLeads(ctx, false)
+	if err != nil {
+		return err
+	}
+	return e.Export(ctx, leads, outputPath)
+}
 
 func (*ExcelExporter) Export(ctx context.Context, leads []*domain.Lead, outputPath string) error {
 	if err := os.MkdirAll(directory(outputPath), 0o750); err != nil {
