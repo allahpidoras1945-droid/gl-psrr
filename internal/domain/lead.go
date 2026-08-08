@@ -59,5 +59,6 @@ type Lead struct {
 	CISReason   string               `json:"cis_reason,omitempty"`
 	TGResults   []TGValidationResult `json:"tg_results,omitempty"`
 	Network     *NetworkMetadata     `json:"network_metadata,omitempty"`
+	MXValid     bool                 `json:"mx_valid"`
 	CreatedAt   time.Time            `json:"created_at"`
 }

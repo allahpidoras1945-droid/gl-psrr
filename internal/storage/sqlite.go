@@ -80,8 +80,8 @@ func (d *DB) SaveLead(ctx context.Context, lead *domain.Lead) error {
 	}
 	domainName := sourceDomain(lead.SourceURL)
 	_, err := d.sql.ExecContext(ctx, `
-INSERT INTO leads (id, company_name, source_url, source_domain, emails, telegram_handles, tg_validation_status, skype, linkedin, twitter, is_cis, cis_reason)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO leads (id, company_name, source_url, source_domain, emails, telegram_handles, tg_validation_status, skype, linkedin, twitter, is_cis, cis_reason, mx_valid)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(source_url) DO UPDATE SET
  company_name = CASE WHEN excluded.company_name <> '' THEN excluded.company_name ELSE leads.company_name END,
  emails = CASE WHEN excluded.emails <> '' THEN excluded.emails ELSE leads.emails END,
@@ -92,7 +92,8 @@ ON CONFLICT(source_url) DO UPDATE SET
  twitter = CASE WHEN excluded.twitter <> '' THEN excluded.twitter ELSE leads.twitter END,
  is_cis = excluded.is_cis,
  cis_reason = CASE WHEN excluded.cis_reason <> '' THEN excluded.cis_reason ELSE leads.cis_reason END,
- updated_at = CURRENT_TIMESTAMP`, lead.ID, lead.CompanyName, lead.SourceURL, domainName, join(lead.Contacts.Emails), join(lead.Contacts.Telegram), tgStatuses(lead.TGResults), join(lead.Contacts.Skype), join(lead.Contacts.LinkedIn), join(lead.Contacts.Twitter), lead.IsCIS, lead.CISReason)
+ mx_valid = excluded.mx_valid,
+ updated_at = CURRENT_TIMESTAMP`, lead.ID, lead.CompanyName, lead.SourceURL, domainName, join(lead.Contacts.Emails), join(lead.Contacts.Telegram), tgStatuses(lead.TGResults), join(lead.Contacts.Skype), join(lead.Contacts.LinkedIn), join(lead.Contacts.Twitter), lead.IsCIS, lead.CISReason, lead.MXValid)
 	if err != nil {
 		return fmt.Errorf("save lead %q: %w", lead.SourceURL, err)
 	}
@@ -128,7 +129,7 @@ func (d *DB) GetLeads(ctx context.Context, filterCIS bool) ([]*domain.Lead, erro
 	if d == nil || d.sql == nil {
 		return nil, fmt.Errorf("database is not initialized")
 	}
-	query := `SELECT id, company_name, source_url, source_domain, emails, telegram_handles, tg_validation_status, skype, linkedin, twitter, is_cis, cis_reason, created_at FROM leads`
+	query := `SELECT id, company_name, source_url, source_domain, emails, telegram_handles, tg_validation_status, skype, linkedin, twitter, is_cis, cis_reason, mx_valid, created_at FROM leads`
 	args := []any{}
 	if filterCIS {
 		query += ` WHERE is_cis = 1`
@@ -143,12 +144,13 @@ func (d *DB) GetLeads(ctx context.Context, filterCIS bool) ([]*domain.Lead, erro
 	for rows.Next() {
 		var lead domain.Lead
 		var sourceDomain, emails, telegram, statuses, skype, linkedin, twitter, cisReason, created string
-		var isCIS bool
-		if err := rows.Scan(&lead.ID, &lead.CompanyName, &lead.SourceURL, &sourceDomain, &emails, &telegram, &statuses, &skype, &linkedin, &twitter, &isCIS, &cisReason, &created); err != nil {
+		var isCIS, mxValid bool
+		if err := rows.Scan(&lead.ID, &lead.CompanyName, &lead.SourceURL, &sourceDomain, &emails, &telegram, &statuses, &skype, &linkedin, &twitter, &isCIS, &cisReason, &mxValid, &created); err != nil {
 			return nil, fmt.Errorf("scan lead: %w", err)
 		}
 		lead.RawName, lead.Contacts = lead.CompanyName, domain.ContactInfo{Emails: split(emails), Telegram: split(telegram), Skype: split(skype), LinkedIn: split(linkedin), Twitter: split(twitter)}
 		lead.IsCIS, lead.CISReason, lead.TGResults = isCIS, cisReason, parseStatuses(statuses)
+		lead.MXValid = mxValid
 		lead.CreatedAt = parseTime(created)
 		leads = append(leads, &lead)
 	}

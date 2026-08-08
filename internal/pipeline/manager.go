@@ -12,6 +12,7 @@ import (
 
 	"github.com/example/glukoza/internal/domain"
 	"github.com/example/glukoza/internal/storage"
+	"github.com/example/glukoza/internal/validator/email"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -25,6 +26,7 @@ type Manager struct {
 	tgCache     map[string]domain.TGValidationResult
 	tgFlight    singleflight.Group
 	store       *storage.DB
+	mxValidator *email.MXValidator
 }
 
 type executionStats struct {
@@ -53,7 +55,7 @@ func newManager(scraper domain.Scraper, filter domain.Filter, dedup interface{ I
 	if workerCount < 1 {
 		workerCount = 1
 	}
-	return &Manager{scraper: scraper, filter: filter, dedup: dedup, tgValidator: tgValidator, workerCount: workerCount, tgCache: make(map[string]domain.TGValidationResult), store: store}
+	return &Manager{scraper: scraper, filter: filter, dedup: dedup, tgValidator: tgValidator, workerCount: workerCount, tgCache: make(map[string]domain.TGValidationResult), store: store, mxValidator: email.NewMXValidator(2 * time.Second)}
 }
 
 func (m *Manager) Run(ctx context.Context, sources []string) ([]*domain.Lead, error) {
@@ -148,6 +150,12 @@ func (m *Manager) processTarget(ctx context.Context, targetURL string, stats *ex
 		}
 	}
 	if m.tgValidator == nil {
+		lead.MXValid = m.validateEmails(ctx, lead.Contacts.Emails)
+		if m.store != nil {
+			if err := m.store.SaveLead(ctx, lead); err != nil {
+				return nil, err
+			}
+		}
 		return lead, nil
 	}
 	validHandles := make([]string, 0, len(lead.Contacts.Telegram))
@@ -167,12 +175,27 @@ func (m *Manager) processTarget(ctx context.Context, targetURL string, stats *ex
 		}
 	}
 	lead.Contacts.Telegram = validHandles
+	lead.MXValid = m.validateEmails(ctx, lead.Contacts.Emails)
 	if m.store != nil {
 		if err := m.store.SaveLead(ctx, lead); err != nil {
 			return nil, err
 		}
 	}
 	return lead, nil
+}
+
+// validateEmails reports true once any email's domain has usable MX records.
+func (m *Manager) validateEmails(ctx context.Context, emails []string) bool {
+	if m.mxValidator == nil || len(emails) == 0 {
+		return false
+	}
+	for _, address := range emails {
+		valid, err := m.mxValidator.ValidateEmailDomain(ctx, address)
+		if err == nil && valid {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *executionStats) recordTelegramStatus(status domain.TGStatus) {
