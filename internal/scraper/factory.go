@@ -19,10 +19,13 @@ type Factory struct {
 func NewScraperFactory(cfg ScraperConfig, extractor domain.Extractor) domain.Scraper {
 	defaultScraper := NewCollyScraper(cfg, extractor)
 	affpaying := NewAffpayingScraper(cfg, extractor)
+	offervault := NewOfferVaultScraper(cfg, extractor)
 	return &Factory{
 		routes: map[string]domain.Scraper{
-			"affpaying.com":     affpaying,
-			"www.affpaying.com": affpaying,
+			"affpaying.com":      affpaying,
+			"www.affpaying.com":  affpaying,
+			"offervault.com":     offervault,
+			"www.offervault.com": offervault,
 		},
 		defaultScraper: defaultScraper,
 	}

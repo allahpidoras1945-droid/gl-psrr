@@ -19,6 +19,15 @@ func TestScraperFactoryRoutesKnownAndDefaultHosts(t *testing.T) {
 			t.Fatalf("route %s uses %T", host, scraper)
 		}
 	}
+	for _, host := range []string{"offervault.com", "www.offervault.com"} {
+		scraper, exists := factory.routes[host]
+		if !exists {
+			t.Fatalf("missing route for %s", host)
+		}
+		if _, isOfferVault := scraper.(*OfferVaultScraper); !isOfferVault {
+			t.Fatalf("route %s uses %T", host, scraper)
+		}
+	}
 	if _, isDefault := factory.defaultScraper.(*CollyScraper); !isDefault {
 		t.Fatalf("default scraper uses %T", factory.defaultScraper)
 	}

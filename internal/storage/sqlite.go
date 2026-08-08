@@ -99,6 +99,31 @@ ON CONFLICT(source_url) DO UPDATE SET
 	return nil
 }
 
+// ExistingSourceURLs returns every source_url already recorded, used to skip
+// re-discovering the same network profiles across crawler runs.
+func (d *DB) ExistingSourceURLs(ctx context.Context) (map[string]struct{}, error) {
+	if d == nil || d.sql == nil {
+		return nil, fmt.Errorf("database is not initialized")
+	}
+	rows, err := d.sql.QueryContext(ctx, `SELECT source_url FROM leads`)
+	if err != nil {
+		return nil, fmt.Errorf("query existing source URLs: %w", err)
+	}
+	defer rows.Close()
+	existing := make(map[string]struct{})
+	for rows.Next() {
+		var sourceURL string
+		if err := rows.Scan(&sourceURL); err != nil {
+			return nil, fmt.Errorf("scan source URL: %w", err)
+		}
+		existing[sourceURL] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate source URLs: %w", err)
+	}
+	return existing, nil
+}
+
 func (d *DB) GetLeads(ctx context.Context, filterCIS bool) ([]*domain.Lead, error) {
 	if d == nil || d.sql == nil {
 		return nil, fmt.Errorf("database is not initialized")
